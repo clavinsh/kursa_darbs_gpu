@@ -268,7 +268,7 @@ void hashCheck(std::vector<std::string>& passwords, std::vector<uint8_t>& hash, 
 {
 	assert(*cracked_idx == -1); // te sākumā jau jābūt vērtībai -1, padota no main
 
-	const int batchSize = 1 << 18; // 1D režģiem cuda limitācija ir 2^31, bet šeit limitējošais faktors būs atmiņa parolēm, 2^20 paroles varētu būt normāls apjoms
+	const int batchSize = 1 << 18; // 1D režģiem cuda limitācija ir 2^31, bet šeit limitējošais faktors būs atmiņa parolēm
 
 	const int passwordCount = passwords.size();
 	const int maxPwLength = 55; // maksimālais ziņojuma garums, lai tas ietilptu vienā sha blokā
