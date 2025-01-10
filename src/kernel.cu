@@ -540,10 +540,14 @@ int main(int argc, char* argv[])
 	catch (const std::runtime_error &e)
 	{
 		std::cerr << "Error! " << e.what() << std::endl;
+
+		// profilakses vajadzībām, ja nu netika korekti atbrīvota GPU atmiņa
+		CUDA_CHECK(cudaDeviceReset());
+
 		return 1;
 	}
 	
-	// profilakses vajadzībām, ja nu netika atdota korekti atbrīvota GPU atmiņa
+	// profilakses vajadzībām, ja nu netika korekti atbrīvota GPU atmiņa
 	CUDA_CHECK(cudaDeviceReset());
 
 	return 0; 
