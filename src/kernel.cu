@@ -264,45 +264,8 @@ std::string parseBytesToHexString(const uint8_t* data, size_t length)
 	return ss.str();
 }
 
-// pie lieliem failu izmēriem nav jēdzīgi apstrādāt visu failu reizē, ielasot visu saturu atmiņā,
-// ņemot vērā batchSize un offsetu, tiek ielasīti batchSize skaita elementi sākot no offset failā
-bool processFileByBatch(const std::string& fileName,std::vector<std::string>& buffer,std::size_t batchSize,std::size_t& offset)
-{
-	std::ifstream file(fileName);
 
-	if(!file.is_open())
-	{
-		throw std::runtime_error("Could not open file " + fileName);
-	}
-	
-	// jātiek pozīcijā failā pēc offset
-	file.seekg(0,std::ios::beg);
-	std::string line;
-	std::size_t currentLine = 0;
-
-	while(currentLine < offset && std::getline(file,line))
-	{
-		currentLine++;
-	}
-
-	// ja nu rodas situācija, kad buffer nebija iztukšots 
-	buffer.clear();
-
-	int batchCount = 0;
-
-	while(batchCount < batchSize && std::getline(file,line))
-	{
-		buffer.push_back(line);
-		batchCount++;
-		offset++;
-	}
-
-	file.close();
-
-	return !buffer.empty(); // standarta situācijā izpildīsies, kad sasniegtas faila beigas
-}
-
-void hashCheck(const std::string& fileName, std::vector<uint8_t>& hash, int *cracked_idx, bool useGpu)
+void hashCheck(const std::string& fileName, std::vector<uint8_t>& hash, int *cracked_idx, bool useGpu, std::string& foundPw)
 {
 	assert(*cracked_idx == -1); // te sākumā jau jābūt vērtībai -1, padota no main
 
@@ -316,13 +279,28 @@ void hashCheck(const std::string& fileName, std::vector<uint8_t>& hash, int *cra
 
 	std::vector<std::string> batchBuffer;
 
-	size_t lineOffset = 0;
 
-	while(processFileByBatch(fileName,batchBuffer,batchSize,lineOffset))
+	std::ifstream file(fileName);
+	if(!file.is_open())
 	{
-		size_t currentBatchSize = batchBuffer.size();
+		throw std::runtime_error("Could not open file " + fileName);
+	}
+
+	std::string line;
+	size_t lineIdx;
+
+
+	while(!file.eof())
+	{
+		// ielādē attiecīgo batch buferī
+		batchBuffer.clear();
+		for(size_t i = 0; i < batchSize && std::getline(file,line); i++, lineIdx++) {
+			batchBuffer.push_back(line);
+		}
+		
 
 		// batcham atbilstošo paroļu ievietošana buferī
+		size_t currentBatchSize = batchBuffer.size();
 		for(size_t i = 0; i < currentBatchSize; i++) {
 			const std::string& pw = batchBuffer[i];
 			int pwLength = pw.size();
@@ -379,7 +357,8 @@ void hashCheck(const std::string& fileName, std::vector<uint8_t>& hash, int *cra
 		
 			if(*cracked_idx != -1)
 			{
-				*cracked_idx += (lineOffset - currentBatchSize); // indekss ir relatīvs batcham, tāpēc vajag offsetu pieskaitīt
+				foundPw = batchBuffer[*cracked_idx];
+				*cracked_idx += (lineIdx - currentBatchSize); // indekss ir relatīvs batcham, tāpēc vajag offsetu pieskaitīt
 				return;
 			}
 		}
@@ -396,12 +375,15 @@ void hashCheck(const std::string& fileName, std::vector<uint8_t>& hash, int *cra
 				cpu_sha256(pwStart, pwLength, computedHash.data());
 
 				if (computedHash == hash) {
-					*cracked_idx = lineOffset - currentBatchSize + i;
+					foundPw = batchBuffer[i];
+					*cracked_idx = lineIdx - currentBatchSize + i;
 					return;
 				}
 			}
 		}
 	}
+	file.close();
+
 }
 
 
@@ -425,32 +407,6 @@ void processFile(const std::string& fileName, std::vector<std::string>& buffer)
 	file.close();
 }
 
-
-std::string findPwAtLine(const std::string& fileName,size_t targetLine)
-{
-	std::ifstream file(fileName);
-
-	if(!file.is_open())
-	{
-		throw std::runtime_error("Could not open file " + fileName);
-	}
-
-	std::string line;
-	std::size_t currentLine = 0;
-
-	while(std::getline(file,line))
-	{
-		if(currentLine == targetLine)
-		{
-			file.close();
-			return line;
-		}
-		currentLine++;
-	}
-
-	file.close();
-	return "";
-}
 
 // sha funkcijas testa device kodols
 __global__ void testKernel(
@@ -538,10 +494,9 @@ int main(int argc, char* argv[])
 			const std::string inputFileName = argv[2];
 			const std::string hexHash = argv[3];
 
-			std::vector<std::string> buffer;
-			processFile(inputFileName, buffer);
-
 			std::vector<uint8_t> hash = hexStringToBytes(hexHash);
+			
+			std::string foundPw;
 
 			std::cout << "Starting search...\n";
 
@@ -549,10 +504,10 @@ int main(int argc, char* argv[])
 
 			if (cpuOrGpu == "--cpu") {
 				std::cout << "CPU mode\n";
-				hashCheck(inputFileName, hash, &cracked_idx, false);
+				hashCheck(inputFileName, hash, &cracked_idx, false, foundPw);
 			} else if (cpuOrGpu == "--gpu") {
 				std::cout << "GPU mode\n";
-				hashCheck(inputFileName, hash, &cracked_idx, true);
+				hashCheck(inputFileName, hash, &cracked_idx, true, foundPw);
 			} else {
 				throw std::runtime_error("Invalid mode! Use --cpu or --gpu");
 			}
@@ -561,7 +516,7 @@ int main(int argc, char* argv[])
 			if (cracked_idx != -1)
 			{
 				std::cout << "Password found!\n"
-					<< findPwAtLine(inputFileName, cracked_idx) << std::endl;
+					<< foundPw << std::endl;
 			}
 			else
 			{
@@ -587,7 +542,8 @@ int main(int argc, char* argv[])
 		std::cerr << "Error! " << e.what() << std::endl;
 		return 1;
 	}
-
+	
+	// profilakses vajadzībām, ja nu netika atdota korekti atbrīvota GPU atmiņa
 	CUDA_CHECK(cudaDeviceReset());
 
 	return 0; 
